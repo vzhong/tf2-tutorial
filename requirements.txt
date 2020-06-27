@@ -1,0 +1,6 @@
+tensorflow
+tqdm
+requests
+ujson
+revtok
+rich
