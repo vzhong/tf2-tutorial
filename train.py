@@ -14,6 +14,7 @@ class Model(tf.keras.Model):
     def __init__(self, args):
         super().__init__()
         self.args = args
+        self.dropout = tf.keras.layers.Dropout(args.dropout)
         self.emb = tf.keras.layers.Embedding(args.nwords, args.demb)
         self.rnn = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(args.drnn, return_sequences=True))
         self.attn_scorer = tf.keras.layers.Dense(1)
@@ -27,16 +28,16 @@ class Model(tf.keras.Model):
 
     def call(self, batch, training=True):
         emb1 = self.emb(batch['ids1'])
-        rnn1 = self.rnn(emb1)
-        score1 = self.attn_scorer(rnn1)
+        rnn1 = self.rnn(self.dropout(emb1, training=training))
+        score1 = self.attn_scorer(self.dropout(rnn1, training=training))
         mask1 = tf.expand_dims(batch['mask1'], axis=2)
         score1 = score1 - 1e20*(1-mask1)
         score1 = tf.nn.softmax(score1, axis=1)
         ctx1 = tf.reduce_sum(tf.multiply(rnn1, tf.broadcast_to(score1, shape=rnn1.shape)), axis=1)
 
         emb2 = self.emb(batch['ids2'])
-        rnn2 = self.rnn(emb2)
-        score2 = self.attn_scorer(rnn2)
+        rnn2 = self.rnn(self.dropout(emb2, training=training))
+        score2 = self.attn_scorer(self.dropout(rnn2, training=training))
         mask2 = tf.expand_dims(batch['mask2'], axis=2)
         score2 = score2 - 1e20*(1-mask2)
         score2 = tf.nn.softmax(score2, axis=1)
@@ -55,7 +56,10 @@ class Model(tf.keras.Model):
         return dict(acc=eq.numpy().mean().item())
 
     def early_stop(self, metrics, best):
-        return metrics['dev_acc'] > best.get('dev_acc', -1)
+        better = metrics['dev_acc'] > best.get('dev_acc', -1)
+        if better:
+            print('{} > {}'.format(metrics['dev_acc'], best.get('dev_acc', -1)))
+        return better
 
     def output_dir(self):
         return self.args.dexp
@@ -102,7 +106,7 @@ class Model(tf.keras.Model):
                     metrics.update({'dev_{}'.format(k): v for k, v in self.run_evaluate(dev).items()})
                     print(metrics)
                     if self.early_stop(metrics, best):
-                        metrics.update(best)
+                        best.update(metrics)
                         print('Found new best!')
                         save_path = manager.save()
                         print("Saved checkpoint for step {}: {}".format(int(ckpt.step), save_path))
@@ -172,14 +176,17 @@ if __name__ == '__main__':
 
     args = argparse.Namespace(
         nwords=len(proc['word2index']),
+        seed=42,
         batch=32,
         demb=100,
         drnn=200,
+        dropout=0.3,
         dexp=os.path.join(os.getcwd(), 'exp'),
         nlabels=len(SNLI.labels),
         epoch=10,
         eval_period=1000,
     )
+    tf.random.set_seed(args.seed)
     model = Model(args)
     train = Model.make_tf_data(proc['splits']['train'])
     dev = Model.make_tf_data(proc['splits']['dev'])
