@@ -66,7 +66,6 @@ class Model(tf.keras.Model):
             metrics = defaultdict(list)
             for batch_id, batch in enumerate(train):
                 steps += 1
-                batch_size = batch['label'].shape[0]
 
                 with tf.GradientTape() as tape:
                     out = self(batch, training=True)
@@ -79,7 +78,7 @@ class Model(tf.keras.Model):
                     for k, v in self.compute_metrics(preds, batch).items():
                         metrics[k].append(v)
 
-                bar.update(batch_size)
+                bar.update(1)
                 if steps % self.args.eval_period == 0:
                     metrics = {'train_{}'.format(k): sum(v)/len(v) for k, v in metrics.items()}
                     metrics.update({'dev_{}'.format(k): v for k, v in self.run_evaluate(dev).items()})
@@ -154,7 +153,7 @@ if __name__ == '__main__':
         demb=100,
         drnn=200,
         nlabels=len(SNLI.labels),
-        epoch=100,
+        epoch=10,
         eval_period=1000,
     )
     model = Model(args)
