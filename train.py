@@ -54,18 +54,36 @@ class Model(tf.keras.Model):
         eq = tf.equal(preds, batch['label'])
         return dict(acc=eq.numpy().mean().item())
 
+    def early_stop(self, metrics, best):
+        return metrics['dev_acc'] > best.get('dev_acc', -1)
+
+    def output_dir(self):
+        return self.args.dexp
+
+    def get_checkpoint_manager(self, optimizer):
+        ckpt = tf.train.Checkpoint(step=tf.Variable(1), optimizer=optimizer, model=self)
+        manager = tf.train.CheckpointManager(ckpt, self.output_dir(), max_to_keep=3)
+        return ckpt, manager
+
     def run_train(self, train, dev, num_train_steps):
         train = train.shuffle(1000).padded_batch(self.args.batch)
         optimizer = self.get_optimizer()
         objective = self.get_objective()
 
-        steps = 0
+        ckpt, manager = self.get_checkpoint_manager(optimizer=optimizer)
+        ckpt.restore(manager.latest_checkpoint)
+        if manager.latest_checkpoint:
+            print("Restored from {}".format(manager.latest_checkpoint))
+        else:
+            print("Initializing from scratch.")
+
         bar = tqdm(total=num_train_steps, desc='training steps')
+        best = dict()
 
         for epoch in range(self.args.epoch):
             metrics = defaultdict(list)
             for batch_id, batch in enumerate(train):
-                steps += 1
+                ckpt.step.assign_add(1)
 
                 with tf.GradientTape() as tape:
                     out = self(batch, training=True)
@@ -79,10 +97,15 @@ class Model(tf.keras.Model):
                         metrics[k].append(v)
 
                 bar.update(1)
-                if steps % self.args.eval_period == 0:
+                if int(ckpt.step) % self.args.eval_period == 0:
                     metrics = {'train_{}'.format(k): sum(v)/len(v) for k, v in metrics.items()}
                     metrics.update({'dev_{}'.format(k): v for k, v in self.run_evaluate(dev).items()})
                     print(metrics)
+                    if self.early_stop(metrics, best):
+                        metrics.update(best)
+                        print('Found new best!')
+                        save_path = manager.save()
+                        print("Saved checkpoint for step {}: {}".format(int(ckpt.step), save_path))
                     metrics = defaultdict(list)
 
     def run_evaluate(self, data: tf.data.Dataset):
@@ -152,6 +175,7 @@ if __name__ == '__main__':
         batch=32,
         demb=100,
         drnn=200,
+        dexp=os.path.join(os.getcwd(), 'exp'),
         nlabels=len(SNLI.labels),
         epoch=10,
         eval_period=1000,
