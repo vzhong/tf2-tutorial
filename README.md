@@ -4,7 +4,7 @@
 pip install -r requirements.txt
 ```
 
-# Trainn
+# Train
 
 ```
 python train.py
